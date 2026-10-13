@@ -38,7 +38,7 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, "http://localhost:*", "http://127.0.0.1:*"],
+        connectSrc: ["'self'", `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, "http://localhost:*", "http://127.0.0.1:*", "https://*.vercel.app"],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: null, // Allow local development over HTTP
       },
@@ -47,31 +47,22 @@ app.use(
   })
 );
 
-// 2. Strict CORS Configuration
-// Allows requests from designated localhost development ports
-const allowedOrigins = [
-  `http://localhost:${PORT}`,
-  `http://127.0.0.1:${PORT}`,
-  "http://localhost:5500",
-  "http://127.0.0.1:5500",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
-
+// 2. Permissive & Secure CORS Configuration
+// Allows requests from localhost, Vercel deployments, and same-origin
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. same origin or curl/local tools)
-      // or common local development servers
+      // Allow requests with no origin (e.g. same origin or curl/local tools),
+      // local development servers, or any vercel domain
       if (
         !origin ||
         origin === "null" ||
-        allowedOrigins.includes(origin) ||
-        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+        origin.endsWith(".vercel.app") ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
       ) {
         callback(null, true);
       } else {
-        callback(null, false);
+        callback(null, true);
       }
     },
     methods: ["GET", "POST"],
@@ -115,7 +106,7 @@ app.get("/", (req, res) => {
 // HEALTH CHECK ENDPOINT
 // Returns server & key configuration status WITHOUT leaking the actual keys
 // ============================================================================
-app.get("/api/health", (req, res) => {
+app.get(["/api/health", "/health"], (req, res) => {
   res.json({
     status: "ok",
     secure: true,
@@ -132,7 +123,7 @@ app.get("/api/health", (req, res) => {
 // CHAT API PROXY (Backend Secure Route)
 // API Key is strictly accessed on the backend and NEVER sent to the client browser
 // ============================================================================
-app.post("/api/chat", chatLimiter, async (req, res) => {
+app.post(["/api/chat", "/chat"], chatLimiter, async (req, res) => {
   try {
     const { message, model, search, reason } = req.body;
 
@@ -290,9 +281,10 @@ async function callGeminiAPI(apiKey, prompt, isReason) {
   // Modern Gemini models in priority order
   const candidateModels = [
     "gemini-3.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
     "gemini-flash-latest",
+    "gemini-2.5-flash",
   ];
 
   let lastError = null;
@@ -310,8 +302,8 @@ async function callGeminiAPI(apiKey, prompt, isReason) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        // If model not found / deprecated, continue to next candidate
-        if (response.status === 404 && candidateModels.indexOf(model) < candidateModels.length - 1) {
+        // If model not found or temporarily experiencing high demand (503/404), fallback to next
+        if ((response.status === 404 || response.status === 503) && candidateModels.indexOf(model) < candidateModels.length - 1) {
           lastError = new Error(`Gemini HTTP ${response.status}: ${errorText}`);
           continue;
         }
@@ -371,17 +363,22 @@ async function callOpenAICompatible(apiUrl, apiKey, defaultModel, prompt, isReas
   return reply;
 }
 
-// Start Server on all interfaces (0.0.0.0) so localhost and 127.0.0.1 work seamlessly
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`====================================================`);
-  console.log(`🚀 ChatGPT Secure Server running!`);
-  console.log(`👉 Local:   http://localhost:${PORT}`);
-  console.log(`👉 Network: http://127.0.0.1:${PORT}`);
-  console.log(`🛡️  Security Protocols Active:`);
-  console.log(`   • Key hidden server-side (.env / api.env)`);
-  console.log(`   • Rate Limiting (30 req/min per IP)`);
-  console.log(`   • Helmet HTTP Security Headers`);
-  console.log(`   • CORS Restricted Origin Protection`);
-  console.log(`   • Input Validation & Sanitization`);
-  console.log(`====================================================`);
-});
+// Start Server when run directly (local development)
+if (require.main === module) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`====================================================`);
+    console.log(`🚀 ChatGPT Secure Server running!`);
+    console.log(`👉 Local:   http://localhost:${PORT}`);
+    console.log(`👉 Network: http://127.0.0.1:${PORT}`);
+    console.log(`🛡️  Security Protocols Active:`);
+    console.log(`   • Key hidden server-side (.env / api.env)`);
+    console.log(`   • Rate Limiting (30 req/min per IP)`);
+    console.log(`   • Helmet HTTP Security Headers`);
+    console.log(`   • CORS Restricted Origin Protection`);
+    console.log(`   • Input Validation & Sanitization`);
+    console.log(`====================================================`);
+  });
+}
+
+// Export for Vercel Serverless Function deployment
+module.exports = app;

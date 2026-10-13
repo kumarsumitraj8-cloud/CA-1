@@ -329,9 +329,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const typingIndicator = addTypingIndicator();
 
     try {
-      const apiEndpoint = window.location.origin.includes(":3000")
-        ? "/api/chat"
-        : "http://localhost:3000/api/chat";
+      const isLocalDevPort =
+        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") &&
+        window.location.port &&
+        window.location.port !== "3000";
+
+      const apiEndpoint = isLocalDevPort
+        ? "http://localhost:3000/api/chat"
+        : "/api/chat";
 
       const response = await fetch(apiEndpoint, {
         method: "POST",
