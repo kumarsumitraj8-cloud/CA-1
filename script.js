@@ -165,6 +165,10 @@ document.addEventListener("DOMContentLoaded", () => {
     msgWrapper.className = "msg-wrapper bot";
 
     let metaHtml = "";
+    if (meta.provider) {
+      metaHtml += `<div style="font-size: 11.5px; font-weight: 600; color: #10a37f; margin-bottom: 6px; display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; padding: 2px 8px; border-radius: 9999px;">⚡ ${escapeHtml(meta.provider)}</div><br>`;
+    }
+
     if (meta.reasoning) {
       metaHtml += `
         <div class="reasoning-box">
@@ -305,7 +309,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Send Message Action
-  function sendMessage() {
+  async function sendMessage() {
     const text = userInput.value.trim();
     if (!text && !attachedFile) return;
 
@@ -324,11 +328,64 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const typingIndicator = addTypingIndicator();
 
-    setTimeout(() => {
+    try {
+      const apiEndpoint = window.location.origin.includes(":3000")
+        ? "/api/chat"
+        : "http://localhost:3000/api/chat";
+
+      const response = await fetch(apiEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: text,
+          model: selectedModel,
+          search: isSearch,
+          reason: isReason,
+        }),
+      });
+
       typingIndicator.remove();
-      const reply = generateBotReply(text, !!currentFile, isReason, isSearch);
-      streamBotResponse(reply, { reasoning: isReason, search: isSearch });
-    }, 700);
+
+      if (!response.ok) {
+        let errData;
+        try {
+          errData = await response.json();
+        } catch {
+          if (response.status === 403 || response.status === 404) {
+            errData = {
+              error: `Server returned HTTP ${response.status}. If you opened the site via Live Server or file://, please run \`npm start\` and browse to http://localhost:3000.`,
+            };
+          } else {
+            errData = { error: `Server error (${response.status})` };
+          }
+        }
+        streamBotResponse(`❌ **Error:** ${errData.error || "Unable to retrieve response from server."}`);
+        return;
+      }
+
+      const data = await response.json();
+      const reply = data.reply || "No response received.";
+      streamBotResponse(reply, {
+        reasoning: isReason,
+        search: isSearch,
+        provider: data.provider,
+      });
+    } catch (err) {
+      typingIndicator.remove();
+      const fallbackReply = generateBotReply(text, !!currentFile, isReason, isSearch);
+      streamBotResponse(
+        `⚠️ **Offline Mode / Server Not Connected**\n\n` +
+        `Could not reach the secure backend at \`/api/chat\` (${err.message}).\n\n` +
+        `To use the secure backend server and your API key:\n` +
+        `1. Start the server by running: \`npm start\`\n` +
+        `2. Open **http://localhost:3000** in your browser.\n\n` +
+        `---\n\n` +
+        fallbackReply,
+        { reasoning: isReason, search: isSearch }
+      );
+    }
   }
 
   // File Attachment Handling
